@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: gestion-delais
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/gestion_delais?serverTimezone=UTC&useSSL=false
+    username: root
+    password:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: non_null
+
+app:
+  jwt:
+    secret: gestion-delais-secret-key-dev-only-minimum-32chars!!
+    access-token-expiration-ms: 900000        # 15 minutes
+    refresh-token-expiration-ms: 604800000    # 7 jours
+
+server:
+  port: 8080
