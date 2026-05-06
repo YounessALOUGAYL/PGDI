@@ -9,6 +9,9 @@ import lombok.Builder;
 import lombok.Data;
 
 import java.time.LocalDate;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
 
 @Data
 @Builder
@@ -24,46 +27,33 @@ public class DemandeResponseDTO {
     private Integer         nbJoursPersonnalise;
     private StatutFinalEnum statutFinal;
     private String          infoStatutFinal;
+    private Long            demandeurId;
+    private String          demandeurNom;
 
-    // Demandeur
-    private Long   demandeurId;
-    private String demandeurNom;
-
-    // ── Champs Suivi (hydratés depuis l'entité Suivi liée) ────────────────────
-    // Ces champs sont attendus par useDemandes.js côté React pour
-    // afficher correctement delaiRestant, couleurStatut, stadeInstruction,
-    // evaluateurNom dans le tableau DemandesListPage.
-
+    // ── Champs Suivi ──────────────────────────────────────────────────────────
     private Long      suiviId;
-    private String    stadeInstruction;   // "INSTRUIT" | "EN_COURS" | "EN_RETARD" | "CLOTURE"
-    private String    couleurStatut;      // "VERT" | "ORANGE" | "ROUGE" | "GRIS"
-    private Integer   delaiRestant;       // nb de jours (négatif = retard)
+    private String    stadeInstruction;
+    private String    couleurStatut;
+    private Integer   delaiRestant;
     private Integer   totalJoursSuspendu;
     private boolean   suspensionActive;
-
-    // Renommé AMMPS dans votre contexte (était DMP dans les entités)
-    private LocalDate dateReceptionAMMPS; // = Suivi.dateReceptionDMP
-    private LocalDate echeancierAMMPS;    // = Suivi.echeancierDMP
-
-    // Évaluateur
-    private Long   evaluateurId;
-    private String evaluateurNom;
-
-    // ── Mapper statique ───────────────────────────────────────────────────────
+    private LocalDate dateReceptionAMMPS;
+    private LocalDate echeancierAMMPS;
+    private Long      evaluateurId;
+    private String    evaluateurNom;
 
     /**
-     * Mapper principal — utilisé dans DemandeController.listerDemandes()
-     * et DemandeController.getDemande().
-     *
-     * Reçoit l'entité Demande avec son Suivi déjà chargé (JOIN FETCH dans
-     * la requête repository) et le flag suspensionActive calculé par le service.
-     *
-     * @param demande          entité Demande (avec demande.getSuivi() non null)
-     * @param suspensionActive true si une SuspensionDelai active existe pour ce suivi
+     * Historique complet des compléments — trié par dateEnvoiCpl ASC.
+     * Utilisé par la DelaiTimeline côté React pour afficher tous les
+     * allers-retours (N compléments possibles).
+     * Liste vide (jamais null) si aucun complément.
      */
+    private List<ComplementDTO> complements;
+
+    // ── Mapper principal ──────────────────────────────────────────────────────
+
     public static DemandeResponseDTO from(Demande demande, boolean suspensionActive) {
         DemandeResponseDTOBuilder b = DemandeResponseDTO.builder()
-            // Champs Demande
             .id(demande.getId())
             .numeroDossier(demande.getNumeroDossier())
             .nomEtablissement(demande.getNomEtablissement())
@@ -76,7 +66,6 @@ public class DemandeResponseDTO {
             .demandeurId(demande.getDemandeur().getId())
             .demandeurNom(demande.getDemandeur().getNom());
 
-        // Hydratation des champs Suivi
         Suivi suivi = demande.getSuivi();
         if (suivi != null) {
             b.suiviId(suivi.getId())
@@ -85,60 +74,54 @@ public class DemandeResponseDTO {
              .delaiRestant(suivi.getDelaiRestant())
              .totalJoursSuspendu(suivi.getTotalJoursSuspendu())
              .suspensionActive(suspensionActive)
-             .dateReceptionAMMPS(suivi.getDateReceptionDMP())   // alias AMMPS
-             .echeancierAMMPS(suivi.getEcheancierDMP());        // alias AMMPS
+             .dateReceptionAMMPS(suivi.getDateReceptionDMP())
+             .echeancierAMMPS(suivi.getEcheancierDMP())
+             // Compléments triés chronologiquement — jamais null
+             .complements(
+                 suivi.getComplements() == null
+                     ? Collections.emptyList()
+                     : suivi.getComplements().stream()
+                         .sorted(Comparator.comparing(
+                             c -> c.getDateEnvoiCpl() != null
+                                 ? c.getDateEnvoiCpl()
+                                 : LocalDate.MIN
+                         ))
+                         .map(ComplementDTO::from)
+                         .toList()
+             );
 
             if (suivi.getEvaluateur() != null) {
                 b.evaluateurId(suivi.getEvaluateur().getId())
                  .evaluateurNom(suivi.getEvaluateur().getNom());
             }
         } else {
-            // Suivi non encore initialisé — valeurs neutres explicites
             b.stadeInstruction("INSTRUIT")
              .couleurStatut("GRIS")
-             .suspensionActive(false);
+             .suspensionActive(false)
+             .complements(Collections.emptyList());
         }
 
         return b.build();
     }
 
-    /**
-     * Surcharge sans suspensionActive (lecture unitaire rapide).
-     * Utilisé pour GET /demandes/:id quand on ne veut pas faire
-     * un appel SuspensionDelai supplémentaire.
-     */
     public static DemandeResponseDTO from(Demande demande) {
         return from(demande, false);
     }
 
-    // ── Logique couleur — miroir de SuiviResponseDTO.resoudreCouleur() ────────
+    // ── Logique couleur ───────────────────────────────────────────────────────
 
-    /**
-     * Centralise le calcul de la couleur dans le DTO pour éviter
-     * toute divergence entre la vue liste et la vue détail.
-     *
-     * Règles (identiques à SuiviResponseDTO) :
-     *  CLOTURE               → GRIS
-     *  EN_RETARD             → ROUGE
-     *  INSTRUIT (suspension) → ORANGE
-     *  delaiRestant ≤ 0      → ROUGE
-     *  delaiRestant ≤ 5      → ORANGE (alerte préventive)
-     *  sinon                 → VERT
-     */
     private static String resoudreCouleur(Suivi suivi) {
         if (suivi == null) return "GRIS";
-
         switch (suivi.getStadeInstruction()) {
             case CLOTURE   -> { return "GRIS";   }
             case EN_RETARD -> { return "ROUGE";  }
             case INSTRUIT  -> { return "ORANGE"; }
-            default        -> { /* EN_COURS — on vérifie le délai */ }
+            default        -> { /* EN_COURS */ }
         }
-
         Integer delai = suivi.getDelaiRestant();
-        if (delai == null)  return "GRIS";
-        if (delai <= 0)     return "ROUGE";
-        if (delai <= 5)     return "ORANGE";
+        if (delai == null) return "GRIS";
+        if (delai <= 0)    return "ROUGE";
+        if (delai <= 5)    return "ORANGE";
         return "VERT";
     }
 }

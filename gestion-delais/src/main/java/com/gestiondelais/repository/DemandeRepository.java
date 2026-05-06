@@ -5,6 +5,7 @@ import com.gestiondelais.model.Demande;
 import com.gestiondelais.model.enums.StatutFinalEnum;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -19,34 +20,55 @@ public interface DemandeRepository extends JpaRepository<Demande, Long> {
     boolean           existsByNumeroDossier(String numeroDossier);
 
     /**
-     * Charge toutes les demandes avec leur Suivi et l'Évaluateur du Suivi
-     * en une seule requête SQL (JOIN FETCH).
+     * Charge toutes les demandes avec :
+     *   - Suivi + Évaluateur + Demandeur  → évite N+1 sur les champs calculés
+     *   - Suivi.complements               → nécessaire pour ComplementDTO dans la liste
      *
-     * Sans ce JOIN FETCH, Hibernate génère N+1 requêtes en accédant à
-     * suivi.getDelaiRestant(), suivi.getEvaluateur() etc. pour chaque ligne.
-     *
-     * LEFT JOIN FETCH → inclut les demandes sans Suivi (ne devrait pas arriver
-     * en production mais sécurise la migration).
+     * Note : on ne peut pas JOIN FETCH deux collections en parallèle (MultipleBagFetchException).
+     * On fait donc deux requêtes séparées via @EntityGraph ou deux passes JPQL.
+     * Solution retenue : JOIN FETCH complements dans une requête dédiée,
+     * chargement des suspensions laissé LAZY (non nécessaire pour la liste).
      */
     @Query("""
-        SELECT d FROM Demande d
+        SELECT DISTINCT d FROM Demande d
+        LEFT JOIN FETCH d.demandeur
         LEFT JOIN FETCH d.suivi s
         LEFT JOIN FETCH s.evaluateur
-        LEFT JOIN FETCH d.demandeur
         ORDER BY d.id DESC
     """)
     List<Demande> findAllAvecSuivi();
 
     /**
-     * Idem pour une demande unitaire — utilisé dans getDemande(:id)
-     * pour éviter les lazy load en dehors d'une transaction ouverte.
+     * Charge une demande avec son Suivi, ses Compléments et ses Visites
+     * pour la vue détail — utilisé dans getDemande(:id).
+     *
+     * Stratégie : deux requêtes JPQL séquentielles pour éviter
+     * MultipleBagFetchException (on ne peut JOIN FETCH qu'une seule
+     * collection par requête avec Hibernate).
+     *
+     * La première requête charge Suivi + Évaluateur + Demandeur.
+     * Hibernate peuple ensuite automatiquement complements via
+     * le second appel findComplementsByDemandeId.
+     */
+    @Query("""
+        SELECT d FROM Demande d
+        LEFT JOIN FETCH d.demandeur
+        LEFT JOIN FETCH d.suivi s
+        LEFT JOIN FETCH s.evaluateur
+        WHERE d.id = :id
+    """)
+    Optional<Demande> findByIdAvecSuivi(@Param("id") Long id);
+
+    /**
+     * Charge les compléments d'une demande séparément pour éviter
+     * MultipleBagFetchException.
+     * Appelé juste après findByIdAvecSuivi() dans le Controller détail.
      */
     @Query("""
         SELECT d FROM Demande d
         LEFT JOIN FETCH d.suivi s
-        LEFT JOIN FETCH s.evaluateur
-        LEFT JOIN FETCH d.demandeur
+        LEFT JOIN FETCH s.complements
         WHERE d.id = :id
     """)
-    Optional<Demande> findByIdAvecSuivi(Long id);
+    Optional<Demande> findByIdAvecComplements(@Param("id") Long id);
 }

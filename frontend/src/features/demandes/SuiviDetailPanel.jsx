@@ -24,9 +24,9 @@ function fmtDate(iso) {
 
 export default function SuiviDetailPanel({ suivi }) {
   const {
-    echeancierDMP, delaiRestant, totalJoursSuspendu,
+    echeancierAMMPS, delaiRestant, totalJoursSuspendu, // تم التحديث إلى AMMPS
     stadeInstruction, couleurStatut, suspensionActive,
-    evaluateurNom, dateReceptionDMP,
+    evaluateurNom, dateReceptionAMMPS,                 // تم التحديث إلى AMMPS
   } = suivi;
 
   // Barre de progression (approximation Frontend)
@@ -55,8 +55,7 @@ export default function SuiviDetailPanel({ suivi }) {
 
       {/* Bandeau suspension active */}
       {suspensionActive && (
-        <div className="flex items-center gap-2 bg-amber-50 px-5 py-2.5
-                        border-b border-amber-100">
+        <div className="flex items-center gap-2 bg-amber-50 px-5 py-2.5 border-b border-amber-100">
           <PauseCircle className="h-4 w-4 text-amber-500 shrink-0" />
           <p className="text-xs font-medium text-amber-700">
             Le décompte du délai est actuellement{" "}
@@ -117,12 +116,12 @@ export default function SuiviDetailPanel({ suivi }) {
           <Metrique
             icon={Clock4}
             label="Date d'échéance"
-            value={fmtDate(echeancierDMP) ?? "Non calculé"}
+            value={fmtDate(echeancierAMMPS) ?? "Non calculé"} // تم التحديث
           />
           <Metrique
             icon={CheckCircle2}
-            label="Réception DMP"
-            value={fmtDate(dateReceptionDMP) ?? "Non renseigné"}
+            label="Réception AMMPS" // تم التحديث بصرياً
+            value={fmtDate(dateReceptionAMMPS) ?? "Non renseigné"} // تم التحديث
           />
           <Metrique
             icon={PauseCircle}

@@ -7,10 +7,7 @@ import com.gestiondelais.model.Demande;
 import com.gestiondelais.model.Suivi;
 import com.gestiondelais.model.Utilisateur;
 import com.gestiondelais.model.enums.TypeDelaiEnum;
-import com.gestiondelais.repository.DemandeRepository;
-import com.gestiondelais.repository.SuiviRepository;
-import com.gestiondelais.repository.SuspensionDelaiRepository;
-import com.gestiondelais.repository.UtilisateurRepository;
+import com.gestiondelais.repository.*;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -25,17 +22,13 @@ import java.util.List;
 @RequiredArgsConstructor
 public class DemandeController {
 
-    private final DemandeRepository     demandeRepository;
-    private final UtilisateurRepository utilisateurRepository;
-    private final SuiviRepository       suiviRepository;
+    private final DemandeRepository         demandeRepository;
+    private final UtilisateurRepository     utilisateurRepository;
+    private final SuiviRepository           suiviRepository;
     private final SuspensionDelaiRepository suspensionDelaiRepository;
 
-    // ── Utilitaire privé ─────────────────────────────────────────────────────
+    // ── Utilitaire ────────────────────────────────────────────────────────────
 
-    /**
-     * Détermine si le suivi d'une demande a une suspension active.
-     * Retourne false si le suivi est null (demande sans suivi initialisé).
-     */
     private boolean hasSuspensionActive(Demande demande) {
         if (demande.getSuivi() == null) return false;
         return suspensionDelaiRepository
@@ -43,21 +36,16 @@ public class DemandeController {
             .isPresent();
     }
 
-    // ── Endpoints ────────────────────────────────────────────────────────────
+    // ── Endpoints ─────────────────────────────────────────────────────────────
 
-    /**
-     * POST /api/v1/demandes
-     * Crée une Demande et initialise son Suivi vide.
-     */
     @PostMapping
     public ResponseEntity<DemandeResponseDTO> creerDemande(
             @Valid @RequestBody DemandeRequestDTO dto) {
 
         if (dto.getTypeDelaiLegal() == TypeDelaiEnum.PERSONNALISE
-                && dto.getNbJoursPersonnalise() == null) {
+                && dto.getNbJoursPersonnalise() == null)
             throw new IllegalStateException(
                 "nbJoursPersonnalise requis pour le type PERSONNALISE");
-        }
 
         Utilisateur demandeur = utilisateurRepository.findById(dto.getDemandeurId())
             .orElseThrow(() -> new EntityNotFoundException(
@@ -76,68 +64,66 @@ public class DemandeController {
         Demande saved = demandeRepository.save(demande);
         suiviRepository.save(Suivi.builder().demande(saved).build());
 
-        // Recharge avec JOIN FETCH pour hydrater le DTO proprement
         Demande reloaded = demandeRepository.findByIdAvecSuivi(saved.getId())
             .orElseThrow();
-
         return ResponseEntity.status(HttpStatus.CREATED)
             .body(DemandeResponseDTO.from(reloaded, false));
     }
 
     /**
      * GET /api/v1/demandes
-     * Retourne la liste complète des demandes avec les champs Suivi hydratés :
-     * stadeInstruction, couleurStatut, delaiRestant, evaluateurNom, etc.
-     *
-     * Utilise findAllAvecSuivi() pour éviter N+1 et charger Suivi + Evaluateur
-     * en une seule requête SQL.
+     * Liste sans les compléments (trop volumineux pour un tableau).
+     * Utilise findAllAvecSuivi() → une seule requête SQL.
      */
     @GetMapping
     public ResponseEntity<List<DemandeResponseDTO>> listerDemandes() {
-        List<Demande> demandes = demandeRepository.findAllAvecSuivi();
-
-        List<DemandeResponseDTO> result = demandes.stream()
-            .map(d -> DemandeResponseDTO.from(d, hasSuspensionActive(d)))
-            .toList();
-
-        return ResponseEntity.ok(result);
+        return ResponseEntity.ok(
+            demandeRepository.findAllAvecSuivi()
+                .stream()
+                .map(d -> DemandeResponseDTO.from(d, hasSuspensionActive(d)))
+                .toList()
+        );
     }
 
     /**
      * GET /api/v1/demandes/:id
-     * Retourne le détail d'une demande avec les champs Suivi hydratés.
+     * Détail complet incluant la liste des compléments.
+     *
+     * Stratégie deux passes pour éviter MultipleBagFetchException :
+     *  Passe 1 — findByIdAvecSuivi()       → charge Suivi + Évaluateur
+     *  Passe 2 — findByIdAvecComplements() → Hibernate peuple
+     *             suivi.complements dans le même contexte JPA
      */
     @GetMapping("/{id}")
     public ResponseEntity<DemandeResponseDTO> getDemande(@PathVariable Long id) {
+        // Passe 1 : Suivi + Évaluateur
         Demande demande = demandeRepository.findByIdAvecSuivi(id)
             .orElseThrow(() -> new EntityNotFoundException(
                 "Demande introuvable : " + id));
+
+        // Passe 2 : Compléments (Hibernate les injecte dans la même entité
+        // déjà présente dans le contexte de persistance)
+        demandeRepository.findByIdAvecComplements(id);
 
         return ResponseEntity.ok(
             DemandeResponseDTO.from(demande, hasSuspensionActive(demande))
         );
     }
 
-    /**
-     * GET /api/v1/demandes/dossier/:numero
-     */
     @GetMapping("/dossier/{numero}")
     public ResponseEntity<DemandeResponseDTO> getDemandeByNumero(
             @PathVariable String numero) {
         Demande demande = demandeRepository.findByNumeroDossier(numero)
             .orElseThrow(() -> new EntityNotFoundException(
                 "Dossier introuvable : " + numero));
-
-        // Recharge avec JOIN FETCH
-        Demande avecSuivi = demandeRepository.findByIdAvecSuivi(demande.getId())
-            .orElseThrow();
-
+        Long id = demande.getId();
+        demandeRepository.findByIdAvecSuivi(id);
+        demandeRepository.findByIdAvecComplements(id);
+        Demande avecTout = demandeRepository.findByIdAvecSuivi(id).orElseThrow();
         return ResponseEntity.ok(
-            DemandeResponseDTO.from(avecSuivi, hasSuspensionActive(avecSuivi))
+            DemandeResponseDTO.from(avecTout, hasSuspensionActive(avecTout))
         );
     }
-
-    // ── Utilitaires privés ───────────────────────────────────────────────────
 
     private String genererNumeroDossier() {
         return String.format("DEM-%d-%05d",

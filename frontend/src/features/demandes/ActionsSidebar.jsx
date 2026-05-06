@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import complementService from "../../services/complement.service";
 import visiteService     from "../../services/visite.service";
-import { useToast }      from "../../context/ToastContext"; // ← تمت الإضافة
+import { useToast }      from "../../context/ToastContext";
 
 function ActionPanel({
   id, ouvert, onToggle, label, description,
@@ -104,7 +104,7 @@ function ComplementForm({ suiviId, onSuccess, onCancel }) {
   const [produits,  setProduits]  = useState("");
   const [loading,   setLoading]   = useState(false);
   const [error,     setError]     = useState(null);
-  const { success, error: toastError } = useToast(); // ← تمت الإضافة
+  const { success, error: toastError } = useToast();
 
   async function soumettre() {
     if (!dateEnvoi) { setError("La date d'envoi est requise"); return; }
@@ -115,12 +115,12 @@ function ComplementForm({ suiviId, onSuccess, onCancel }) {
         dateEnvoiCpl: dateEnvoi,
         produits: produits ? produits.split(",").map((p) => p.trim()).filter(Boolean) : [],
       });
-      success("La suspension est active. Le délai est gelé.", "Complément créé"); // ← تمت الإضافة
+      success("La suspension est active. Le délai est gelé.", "Complément créé");
       onSuccess();
     } catch (err) {
       const msg = err?.message ?? "Erreur lors de la création";
       setError(msg);
-      toastError(msg, "Erreur"); // ← تمت الإضافة
+      toastError(msg, "Erreur");
     } finally {
       setLoading(false);
     }
@@ -138,19 +138,19 @@ function VisiteForm({ suiviId, onSuccess, onCancel }) {
   const [dateVisite, setDateVisite] = useState("");
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState(null);
-  const { success, error: toastError } = useToast(); // ← تمت الإضافة
+  const { success, error: toastError } = useToast();
 
   async function soumettre() {
     if (!dateVisite) { setError("La date de visite est requise"); return; }
     setLoading(true); setError(null);
     try {
       await visiteService.planifier(suiviId, dateVisite);
-      success("La visite est planifiée. Le délai est suspendu.", "Visite planifiée"); // ← تمت الإضافة
+      success("La visite est planifiée. Le délai est suspendu.", "Visite planifiée");
       onSuccess();
     } catch (err) {
       const msg = err?.message ?? "Erreur lors de la planification";
       setError(msg);
-      toastError(msg, "Erreur"); // ← تمت الإضافة
+      toastError(msg, "Erreur");
     } finally {
       setLoading(false);
     }
@@ -163,35 +163,34 @@ function VisiteForm({ suiviId, onSuccess, onCancel }) {
   );
 }
 
-function ClotureForm({ suivi, onSuccess, onCancel }) {
+function ClotureForm({ demande, onSuccess, onCancel }) {
   const [dateReception, setDateReception] = useState("");
   const [produits,      setProduits]      = useState("");
   const [loading,       setLoading]       = useState(false);
   const [error,         setError]         = useState(null);
-  const { success, error: toastError } = useToast(); // ← تمت الإضافة
+  const { success, error: toastError } = useToast();
 
-  const suspActive = suivi.suspensions?.find((s) => s.enCours);
-  const isVisite   = suspActive?.motif === "VISITE_CONFORMITE";
+  // 1. التعديل الجوهري: البحث عن التكملة النشطة في المصفوفة الجديدة V2.0
+  const activeComplement = demande?.complements?.find((c) => c.suspensionActive);
 
   async function soumettre() {
     if (!dateReception) { setError("La date de réception est requise"); return; }
-    if (!suspActive)    { setError("Aucune suspension active trouvée"); return; }
+    if (!activeComplement) { setError("Aucune suspension de complément active trouvée"); return; }
+    
     setLoading(true); setError(null);
     try {
-      if (isVisite) {
-        await visiteService.cloturerVisite(suspActive.sourceId, { dateReception }, "CONFORME");
-      } else {
-        await complementService.cloturerComplement(suspActive.sourceId, {
-          dateReceptionCpl: dateReception,
-          produits: produits ? produits.split(",").map((p) => p.trim()).filter(Boolean) : undefined,
-        });
-      }
-      success("La suspension est levée. Le délai a repris.", "Suspension clôturée"); // ← تمت الإضافة
+      // 2. إرسال ID التكملة النشطة للـ Backend
+      await complementService.cloturerComplement(activeComplement.id, {
+        dateReceptionCpl: dateReception,
+        produits: produits ? produits.split(",").map((p) => p.trim()).filter(Boolean) : undefined,
+      });
+      
+      success("La suspension est levée. Le délai a repris.", "Suspension clôturée");
       onSuccess();
     } catch (err) {
       const msg = err?.message ?? "Erreur lors de la clôture";
       setError(msg);
-      toastError(msg, "Erreur"); // ← تمت الإضافة
+      toastError(msg, "Erreur");
     } finally {
       setLoading(false);
     }
@@ -199,23 +198,26 @@ function ClotureForm({ suivi, onSuccess, onCancel }) {
 
   return (
     <FormWrapper error={error} loading={loading} onSubmit={soumettre} onCancel={onCancel} submitLabel="Clôturer et reprendre" submitIcon={XCircle}>
-      <Field label={isVisite ? "Date de la 2ème visite *" : "Date de réception *"}><input type="date" value={dateReception} onChange={(e) => setDateReception(e.target.value)} className={inputCls} /></Field>
-      {!isVisite && (
-        <Field label="Produits reçus (AF, AdF… séparés par virgule)">
-          <input type="text" value={produits} placeholder="ex: AF" onChange={(e) => setProduits(e.target.value)} className={inputCls} />
-          <p className="mt-1 text-xs text-slate-400">Saisir "AF" ou "AdF" clôturera définitivement le dossier.</p>
-        </Field>
-      )}
+      <Field label="Date de réception *"><input type="date" value={dateReception} onChange={(e) => setDateReception(e.target.value)} className={inputCls} /></Field>
+      <Field label="Produits reçus (AF, AdF… séparés par virgule)">
+        <input type="text" value={produits} placeholder="ex: AF" onChange={(e) => setProduits(e.target.value)} className={inputCls} />
+        <p className="mt-1 text-xs text-slate-400">Saisir "AF" ou "AdF" clôturera définitivement le dossier.</p>
+      </Field>
     </FormWrapper>
   );
 }
 
 export default function ActionsSidebar({ suivi, demande, onSuccess }) {
   const [ouvert, setOuvert] = useState(null);
-  if (!suivi) return null;
+  if (!suivi || !demande) return null;
 
-  const { suspensionActive, stadeInstruction } = suivi;
-  const estCloture = stadeInstruction === "CLOTURE";
+  // 💡 الحل الذكي: نبحث بأنفسنا لنتأكد هل توجد تكملة قيد الانتظار أم لا!
+  const activeComplement = demande?.complements?.find((c) => c.suspensionActive);
+  
+  // نفعل الزر إذا وجدنا تكملة نشطة، أو إذا كان السيرفر يقول ذلك
+  const suspensionActive = !!activeComplement || demande.suspensionActive || suivi.suspensionActive;
+  
+  const estCloture = suivi.stadeInstruction === "CLOTURE";
   const toggle = (p) => setOuvert((prev) => (prev === p ? null : p));
 
   return (
@@ -235,7 +237,8 @@ export default function ActionsSidebar({ suivi, demande, onSuccess }) {
             <VisiteForm suiviId={suivi.id} onSuccess={() => { setOuvert(null); onSuccess(); }} onCancel={() => setOuvert(null)} />
           </ActionPanel>
           <ActionPanel id="cloture" ouvert={ouvert === "cloture"} onToggle={() => toggle("cloture")} label="Clôturer la suspension" description="Enregistre la réponse et reprend le délai" icon={XCircle} couleur="emerald" disabled={estCloture || !suspensionActive} disabledReason={estCloture ? "Dossier clôturé" : !suspensionActive ? "Aucune suspension active" : null}>
-            <ClotureForm suivi={suivi} onSuccess={() => { setOuvert(null); onSuccess(); }} onCancel={() => setOuvert(null)} />
+            {/* تم تمرير demande بدلاً من suivi لكي نتمكن من استخراج التكملة النشطة */}
+            <ClotureForm demande={demande} onSuccess={() => { setOuvert(null); onSuccess(); }} onCancel={() => setOuvert(null)} />
           </ActionPanel>
         </div>
       </div>
